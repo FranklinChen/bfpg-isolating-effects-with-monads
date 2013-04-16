@@ -1,0 +1,6 @@
+.auto-saves*
+.ensime*
+target/*
+project/target
+project/project
+.#*
