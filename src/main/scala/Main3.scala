@@ -9,6 +9,12 @@
  * lines but only returning a single result) we'd be forcing the caller of our
  * functions to join the resulting lists for us at each level, which is hideous.
  *
+ * This appending ( |+| ) is done with the magic of the monoid typeclass which
+ * includes a zero element (in the list case, this is nil) and an append
+ * operation (in the case of a list, this is ++). Using the monoid append here
+ * is useless because we already know that we're dealing with a list, but seeing
+ * it here demonstrates how scalaz manages the next step.
+ *
  * The writer monad was written to solve this append only state problem. We'll
  * see this in the next step!
  */
