@@ -14,7 +14,7 @@
  * that first.
  */
 
-object Main2 {
+object ReaderMonad {
 
   import scala.xml.pull._
   import scala.io.Source
@@ -26,9 +26,6 @@ object Main2 {
   def getStream(filename: String) = {
     new XMLEventReader(Source.fromFile(filename)).toStream
   }
-
-  var foundElems = mutable.Stack.empty[String]
-  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
 
   def indented( level: Int, text: String ):Reader[String,String] = Reader{
     (indentSeq) => (indentSeq * level) + text
@@ -42,6 +39,10 @@ object Main2 {
       case _ => ()
     }
   }
+
+  //val indentSeq = "  "
+  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
+  var foundElems = mutable.Stack.empty[String]
 
   def main(filename: String) = {
     val readers = for ( event <- getStream( filename ).toList ) yield {

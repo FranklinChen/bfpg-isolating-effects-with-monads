@@ -3,7 +3,7 @@
  * so that we can pre fill in the indentSeq and have that return a function
  * that'll indent a given string at a given level.
  *
- * This is equivalent to IoC, just with functions instead of objects.
+ * This is equivalent to DI, just with functions instead of objects.
  *
  * This is pretty lame though, if three different functions that all need that
  * configuration then we're going to have to pass the config into each of the
@@ -11,7 +11,7 @@
  * cumbersome.
  */
 
-object Main1 {
+object CurriedDI {
 
   import scala.xml.pull._
   import scala.io.Source
@@ -20,9 +20,6 @@ object Main1 {
   def getStream(filename: String) = {
     new XMLEventReader(Source.fromFile(filename)).toStream
   }
-
-  var foundElems = mutable.Stack.empty[String]
-  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
 
   def indented( indentSeq: String )( level: Int, text: String ) = {
     (indentSeq * level) + text
@@ -36,6 +33,10 @@ object Main1 {
       case _ => ()
     }
   }
+
+  //val indentSeq = "  "
+  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
+  var foundElems = mutable.Stack.empty[String]
 
   def main(filename: String) = {
     val indenter = indented( "  " ) _

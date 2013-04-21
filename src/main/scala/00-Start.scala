@@ -23,7 +23,7 @@
  * make code brittle and difficult to test.
  */
 
-object Main {
+object Start {
 
   import scala.xml.pull._
   import scala.io.Source
@@ -32,10 +32,6 @@ object Main {
   def getStream(filename: String) = {
     new XMLEventReader(Source.fromFile(filename)).toStream
   }
-
-  val indentSeq = "  "
-  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
-  var foundElems = mutable.Stack.empty[String]
 
   def indented( indentLevel: Int , text: String ) = {
     ( indentSeq * indentLevel ) + text
@@ -49,6 +45,10 @@ object Main {
       case _ => ()
     }
   }
+
+  val indentSeq = "  "
+  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
+  var foundElems = mutable.Stack.empty[String]
 
   def main(filename: String) = {
     val lines = for ( event <- getStream( filename ) ) yield {

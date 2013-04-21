@@ -19,7 +19,7 @@
  * see this in the next step!
  */
 
-object Main3 {
+object CollectingErrorList {
 
   import scala.xml.pull._
   import scala.io.Source
@@ -33,8 +33,6 @@ object Main3 {
     new XMLEventReader(Source.fromFile(filename)).toStream
   }
 
-  var foundElems = mutable.Stack.empty[String]
-
   def indented( level: Int, text: String ):Reader[String,String] = Reader{
     (indentSeq) => (indentSeq * level) + text
   }
@@ -47,6 +45,10 @@ object Main3 {
       case _ => Nil
     }
   }
+
+  //val indentSeq = "  "
+  //val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
+  var foundElems = mutable.Stack.empty[String]
 
   def main(filename: String) = {
     val result = for ( event <- getStream( filename ).toList ) yield {
@@ -70,10 +72,10 @@ object Main3 {
     }
 
     //This is equivalent to this (because we're using the List monoid):
-    // result.map( _._1 ).foldRight[List[String]]( Nil )( _ ++ _ )
-    result.map( _._1 ).foldRight[List[String]]( mzero )( _ |+| _ ).foreach(
-      System.err.println _
-    )
+    result.map( _._1 ).foldRight[List[String]]( Nil )( _ ++ _ ).foreach( System.err.println _ )
+    //result.map( _._1 ).foldRight[List[String]]( mzero )( _ |+| _ ).foreach(
+    //  System.err.println _
+   // )
 
     result.map( _._2 ).sequenceU.apply( " " ).foreach( println _ )
 
