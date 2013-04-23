@@ -11,39 +11,36 @@
  * cumbersome.
  */
 
+import scala.xml.pull._
+import scala.io.Source
+import scala.collection.mutable
+
 object CurriedDI {
 
-  import scala.xml.pull._
-  import scala.io.Source
-  import scala.collection.mutable
+  case class Config( indentSeq: String )
+  //val indentSeq = Config( "  " )
+  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
+  var foundElems = mutable.Stack.empty[String]
 
-  def getStream(filename: String) = {
-    new XMLEventReader(Source.fromFile(filename)).toStream
-  }
-
-  def indented( indentSeq: String )( level: Int, text: String ) = {
-    (indentSeq * level) + text
+  def indented( config: Config )( level: Int, text: String ) = {
+    (config.indentSeq * level) + text
   }
 
   def verifyNewElement( event: XMLEvent ) = {
     (foundElems.headOption,event) match {
       case (Some("msg"),EvElemStart( _ , l , _ , _ )) => errors += (
-        s"WARN: <$l> shouldn't be within <msg>. Msg should only contain text."
+        s"WARN: Msg should only contain text, contains: <$l>"
       )
       case _ => ()
     }
   }
 
-  //val indentSeq = "  "
-  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
-  var foundElems = mutable.Stack.empty[String]
 
   def main(filename: String) = {
-    val indenter = indented( "  " ) _
+    val indenter = indented( Config( "  " ) ) _
     val lines = for ( event <- getStream( filename ).toList ) yield {
       verifyNewElement( event )
       event match {
-        case EvComment(t) => indenter( foundElems.size , s"<!--$t-->" )
         case EvElemStart( _ , l , a , scope ) => {
           val out = indenter( foundElems.size , s"<$l>" )
           foundElems.push( l )
@@ -54,13 +51,16 @@ object CurriedDI {
           indenter( foundElems.size , s"</$l>" )
         }
         case EvText(t) => indenter( foundElems.size , t )
-        case e => throw new RuntimeException( s"Can't match event: $e" )
       }
     }
 
     errors.foreach( System.err.println _ )
     lines.foreach( println _ )
 
+  }
+
+  def getStream(filename: String) = {
+    new XMLEventReader(Source.fromFile(filename)).toStream
   }
 
 }

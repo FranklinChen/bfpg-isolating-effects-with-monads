@@ -19,42 +19,44 @@
  * see this in the next step!
  */
 
+import scala.xml.pull._
+import scala.io.Source
+import scala.collection.mutable
+import scalaz._
+import std.list._
+import syntax.traverse._
+import syntax.monad._
+
 object CollectingErrorList {
 
-  import scala.xml.pull._
-  import scala.io.Source
-  import scala.collection.mutable
-  import scalaz._
-  import std.list._
-  import syntax.traverse._
-  import syntax.monoid._
+  case class Config( indentSeq: String )
+  //val config = Config( "  " )
+  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
+  var foundElems = mutable.Stack.empty[String]
 
-  def getStream(filename: String) = {
-    new XMLEventReader(Source.fromFile(filename)).toStream
-  }
+  type PpReader[+A] = Reader[Config,A]
+  type PpProgram = PpReader[(List[String],List[String])]
 
-  def indented( level: Int, text: String ):Reader[String,String] = Reader{
-    (indentSeq) => (indentSeq * level) + text
-  }
+  def getIndentSeq(): PpReader[String] = Reader { (conf) => conf.indentSeq }
+
+  def indented( level: Int, text: String ):PpReader[String] =
+    getIndentSeq().map( indentSeq => ( indentSeq * level) + text )
 
   def verifyNewElement( event: XMLEvent ) = {
     (foundElems.headOption,event) match {
       case (Some("msg"),EvElemStart( _ , l , _ , _ )) => List(
-        s"WARN: <$l> shouldn't be within <msg>. Msg should only contain text."
+        s"WARN: Msg should only contain text, contains: <$l>"
       )
       case _ => Nil
     }
   }
 
-  //val indentSeq = "  "
-  //val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
-  var foundElems = mutable.Stack.empty[String]
-
   def main(filename: String) = {
-    val result = for ( event <- getStream( filename ).toList ) yield {
-      val errors = verifyNewElement(event)
-      val prettyPrintedLine = event match {
-        case EvComment(t) => indented( foundElems.size , s"<!--$t-->" )
+    val result = getStream( filename ).toList.foldLeft[PpProgram](
+      (Nil,Nil).point[PpReader]
+    )( (reader,event) => reader.flatMap{ case (errors,outputs) => {
+      val newErrors = verifyNewElement(event)
+      val newReader = event match {
         case EvElemStart( _ , l , _ , _ ) => {
           val out = indented( foundElems.size , s"<$l>" )
           foundElems.push( l )
@@ -65,20 +67,19 @@ object CollectingErrorList {
           indented( foundElems.size , s"</$l>" )
         }
         case EvText(t) => indented( foundElems.size , t )
-        case e => throw new RuntimeException( s"Can't match event: $e" )
       }
+      newReader.map(newOutput => (errors ++ newErrors , newOutput :: outputs))
+    }})
 
-      (errors,prettyPrintedLine)
-    }
-
-    //This is equivalent to this (because we're using the List monoid):
-    result.map( _._1 ).foldRight[List[String]]( Nil )( _ ++ _ ).foreach( System.err.println _ )
-    //result.map( _._1 ).foldRight[List[String]]( mzero )( _ |+| _ ).foreach(
-    //  System.err.println _
-   // )
-
-    result.map( _._2 ).sequenceU.apply( " " ).foreach( println _ )
+    val (errors,output) = result( Config( "  " ) )
+    errors.foreach( System.err.println _ )
+    output.reverse.foreach( println _ )
 
   }
+
+  def getStream(filename: String) = {
+    new XMLEventReader(Source.fromFile(filename)).toStream
+  }
+
 
 }

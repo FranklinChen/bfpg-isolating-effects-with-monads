@@ -23,38 +23,35 @@
  * make code brittle and difficult to test.
  */
 
+import scala.xml.pull._
+import scala.io.Source
+import scala.collection.mutable
+
 object Start {
 
-  import scala.xml.pull._
-  import scala.io.Source
-  import scala.collection.mutable
-
-  def getStream(filename: String) = {
-    new XMLEventReader(Source.fromFile(filename)).toStream
-  }
+  case class Config ( indentSeq: String )
+  val config = Config( "  " )
+  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
+  val foundElems = mutable.Stack.empty[String]
 
   def indented( indentLevel: Int , text: String ) = {
-    ( indentSeq * indentLevel ) + text
+    ( config.indentSeq * indentLevel ) + text
   }
 
   def verifyNewElement( event: XMLEvent ) = {
     (foundElems.headOption,event) match {
       case (Some("msg"),EvElemStart( _ , l , _ , _ )) => errors += (
-        s"WARN: <$l> shouldn't be within <msg>. Msg should only contain text."
+        s"WARN: Msg should only contain text, contains: <$l>"
       )
       case _ => ()
     }
   }
 
-  val indentSeq = "  "
-  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
-  var foundElems = mutable.Stack.empty[String]
 
   def main(filename: String) = {
     val lines = for ( event <- getStream( filename ) ) yield {
       verifyNewElement( event )
       event match {
-        case EvComment(t) => indented( foundElems.size , s"<!--$t-->" )
         case EvElemStart( _ , l , a , scope ) => {
           val out = indented( foundElems.size , s"<$l>" )
           foundElems.push( l )
@@ -65,14 +62,14 @@ object Start {
           indented( foundElems.size , s"</$l>" )
         }
         case EvText(t) => indented( foundElems.size , t )
-        case e => throw new RuntimeException( s"Can't match event: $e" )
       }
     }
-
     errors.foreach( System.err.println _ )
     lines.foreach( println _ )
+  } //end main
 
+  def getStream(filename: String) = {
+    new XMLEventReader(Source.fromFile(filename)).toStream
   }
-
 
 }

@@ -14,41 +14,40 @@
  * that first.
  */
 
+import scala.xml.pull._
+import scala.io.Source
+import scala.collection.mutable
+import scalaz._
+import std.list._
+import syntax.traverse._
+
 object ReaderMonad {
 
-  import scala.xml.pull._
-  import scala.io.Source
-  import scala.collection.mutable
-  import scalaz._
-  import std.list._
-  import syntax.traverse._
+  case class Config( indentSeq: String )
+  //val config = Config( "  " )
+  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
+  var foundElems = mutable.Stack.empty[String]
 
-  def getStream(filename: String) = {
-    new XMLEventReader(Source.fromFile(filename)).toStream
-  }
+  type PpReader[+A] = Reader[Config,A]
 
-  def indented( level: Int, text: String ):Reader[String,String] = Reader{
-    (indentSeq) => (indentSeq * level) + text
-  }
+  def getIndentSeq(): PpReader[String] = Reader { (conf) => conf.indentSeq }
+
+  def indented( level: Int, text: String ):PpReader[String] =
+    getIndentSeq().map( indentSeq => ( indentSeq * level) + text )
 
   def verifyNewElement( event: XMLEvent ) = {
     (foundElems.headOption,event) match {
       case (Some("msg"),EvElemStart( _ , l , _ , _ )) => errors += (
-        s"WARN: <$l> shouldn't be within <msg>. Msg should only contain text."
+        s"WARN: Msg should only contain text, contains: <$l>"
       )
       case _ => ()
     }
   }
 
-  //val indentSeq = "  "
-  val errors:mutable.ListBuffer[String] = mutable.ListBuffer()
-  var foundElems = mutable.Stack.empty[String]
-
   def main(filename: String) = {
     val readers = for ( event <- getStream( filename ).toList ) yield {
       verifyNewElement(event)
       event match {
-        case EvComment(t) => indented( foundElems.size , s"<!--$t-->" )
         case EvElemStart( _ , l , _ , _ ) => {
           val out = indented( foundElems.size , s"<$l>" )
           foundElems.push( l )
@@ -59,13 +58,16 @@ object ReaderMonad {
           indented( foundElems.size , s"</$l>" )
         }
         case EvText(t) => indented( foundElems.size , t )
-        case e => throw new RuntimeException( s"Can't match event: $e" )
       }
     }
 
     errors.foreach( System.err.println _ )
-    readers.sequenceU.apply( " " ).foreach( println _ )
+    readers.sequenceU.apply( Config( "  " ) ).foreach( println _ )
 
+  }
+
+  def getStream(filename: String) = {
+    new XMLEventReader(Source.fromFile(filename)).toStream
   }
 
 }

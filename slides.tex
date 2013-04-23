@@ -1,0 +1,707 @@
+\documentclass[professionalFonts,aspectratio=169]{beamer}
+\usepackage[latin1]{inputenc}
+\usetheme{Madrid}
+\usecolortheme{rose}
+\usepackage{listings}
+\usepackage{fourier}
+\usepackage[scaled=0.8]{luximono}
+\usepackage{helvet}
+\usepackage{color}
+\usepackage{ulem}
+
+\title[Isolating State with Monads]{%
+  Isolating State with Monads\\An Introduction to Reader, Writer and State
+}
+\author{Ben Kolera}
+\institute{bfpg.org}
+\date{April 23, 2013}
+
+\lstdefinelanguage{Scala}{
+    morekeywords={%
+        abstract,case,catch,class,def,do,else,extends,%
+        false,final,finally,for,forSome,if,implicit,import,lazy,%
+        match,new,null,object,override,package,private,protected,%
+        return,sealed,super,this,throw,trait,true,try,type,%
+        val,var,while,with,yield},%
+    sensitive,%
+    morecomment=[l]//,%
+    morecomment=[s]{/*}{*/},%
+}[keywords,comments]%
+
+\definecolor{dkgreen}{rgb}{0,0.6,0}
+\definecolor{gray}{rgb}{0.5,0.5,0.5}
+\definecolor{mauve}{rgb}{0.58,0,0.82}
+ 
+% Default settings for code listings
+\lstset{frame=tb,
+  language=scala,
+  aboveskip=3mm,
+  belowskip=3mm,
+  columns=[c]fixed,%
+  numbers=none,
+  keywordstyle=\color{blue},
+  commentstyle=\color{dkgreen},
+  stringstyle=\color{mauve},
+  tabsize=2,
+  basicstyle={\small\ttfamily},
+  basewidth={0.55em, 0.50em},
+}
+
+\newenvironment{changemargin}[2]{% 
+  \begin{list}{}{% 
+    \setlength{\topsep}{0pt}% 
+    \setlength{\leftmargin}{#1}% 
+    \setlength{\rightmargin}{#2}% 
+    \setlength{\listparindent}{\parindent}% 
+    \setlength{\itemindent}{\parindent}% 
+    \setlength{\parsep}{\parskip}% 
+  }% 
+  \item[]}{\end{list}} 
+
+\begin{document}
+
+\begin{frame}
+\titlepage
+\end{frame}
+
+\section{Introduction}
+
+\subsection{Me}
+\begin{frame}{Me}
+
+\begin{itemize}
+\pause \item Scala and Perl Dev at iseek Communications
+\pause \item Lots of diverse codebases coded by a small team
+\pause \item Often have to modify old bitrotted code.
+\pause \item \sout{Hate} Suck at writing tests
+\pause \item Need to be able to easily reason about code and be confident in changes.
+\pause \item Love how types can keep my refactorings honest and correct
+\pause \item Slowly trying to convince my team that types are awesome
+\end{itemize}
+\end{frame}
+
+\subsection{Goals of this Talk}
+\begin{frame}{Goals of this Talk}
+
+\begin{itemize}
+  \pause \item To take you on a refactoring journey!
+  \pause \item To show you all of the little baby steps on the path to ReaderWriterState.
+  \pause \item To highlight reasons why unrestricted side effects are bad.
+  \pause \item To show to that purifying code $\neq$ removing state.
+  \pause \item To show that types and structures can be used to build and restrict computations as well as data.
+  \pause \item To convince you that all of this isn't hard; its just (brain alteringly) different!
+  \pause \item To convince you that these weird and wonderful changes actually make your code easier to reason about, not the other way around.
+\end{itemize}
+
+\end{frame}
+
+\subsection{Scalaz}
+\begin{frame}{Scalaz}
+\begin{itemize}
+  \pause \item Library with lots of FP goodies missing from the std lib.
+  \pause \item Focus is on composable typeclass based programming.
+  \pause \item Really awesome!
+  \pause \item Fair few code committers are familiar BFPG faces. :)
+  \pause \item Code from this talk depends on it.
+\end{itemize}
+\end{frame}
+
+\subsection{Monads (in 2 minutes)}
+\begin{frame}{Monad Typeclass/Interface}
+
+\begin{itemize}
+\pause \item Typeclass for a type constructor that is 'flatmappable'
+  \begin{itemize}
+    \item We write a monad for \texttt{Option[\textunderscore]}, not \texttt{Option[String]}
+  \end{itemize}        
+\pause \item The typeclass has two methods:
+  \begin{itemize}
+    \pause \item return: \texttt{5.point[Id]}
+    \pause \item flatMap: \texttt{5.point[Id].flatMap( x => 6.point[Id] )}
+  \end{itemize}
+\pause \item We get the map method for free. 
+  \begin{itemize}
+    \pause \item \texttt{5.point[Id].map( \textunderscore \ + 2 )}
+    \pause \item \texttt{5.point[Id].flatMap( x => 6.point[Id].map( \textunderscore \ + x ) )}
+  \end{itemize}
+\pause \item Lots of other machinery written around the typeclass.
+   \begin{itemize}
+     \pause \item Sequence is the most important for us tonight.
+     \pause \item \texttt{(1 to 5).toList.map( \textunderscore.point[Id] ).sequenceU}
+  \end{itemize}
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Why is this useful?}
+\begin{itemize}
+  \pause \item Each monad describes a different computational context.
+  \pause \item We're extremely restricted in how we can interact with a context:
+    \begin{itemize}
+      \pause \item We can transform what is inside with map.
+      \pause \item Join it to another context with flatmap.
+    \end{itemize}
+  \pause \item This is useful to describe/enforce sequential computations.
+  \pause \item Each monad defines flatmap/join in its own special way:
+    \begin{itemize}
+      \pause \item We can make lots of different kinds of chained computations.
+      \pause \item We're going to use different monads to serialize different kinds of state between our computations.
+    \end{itemize}
+\end{itemize}
+\end{frame}
+
+\subsection{Example Programming Problem}
+\begin{frame}{Our (toy) problem}
+
+Read XML from a file and:
+
+\begin{itemize}
+\pause \item Pretty print it to standard out \begin{itemize}
+\item Configurable indentation step (2 spaces,4 spaces, tabs)
+\end{itemize}
+\pause \item Validating the XML and print warnings to stderr \begin{itemize}
+\item We only have one rule: <msg> may only include text
+\end{itemize}
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Example Execution}
+
+\begin{block}{Input}
+\lstinputlisting[frame=none]{test.xml}
+\end{block}
+
+\begin{block}{Output}
+\lstinputlisting[frame=none]{test.output}
+\end{block}
+
+\end{frame}
+
+\section{Our Imperative Beginning}
+
+\begin{frame}{Our Imperative Beginning}
+\end{frame}
+
+\begin{frame}{Our Globals}
+
+\begin{itemize}
+\item Global configuration of the indentation character(s).
+\item Mutable buffer of errors to append to in the program.
+\item Mutable stack of element names to track what we've seen.
+\end{itemize}
+
+\lstinputlisting[language=Scala,firstline=30,lastline=35]{src/main/scala/00-Start.scala}
+
+\end{frame}
+
+\begin{frame}{Indenter}
+
+\begin{itemize}
+\item Takes an indent level and appends level amount of the indentSeq to the text.
+\end{itemize}
+
+\lstinputlisting[language=Scala,firstline=37,lastline=39]{src/main/scala/00-Start.scala}
+
+\end{frame}
+
+\begin{frame}{Verifier}
+
+\begin{itemize}
+\item Examines the new event and the top of the global stack.
+\item Appends error to errors if get a ElemStart inside of <msg>
+\end{itemize}
+
+\lstinputlisting[language=Scala,firstline=41,lastline=48]{src/main/scala/00-Start.scala}
+
+\end{frame}
+
+\begin{frame}{Stream Processor}
+
+\lstinputlisting[language=Scala,firstline=51,lastline=66]{src/main/scala/00-Start.scala}
+
+\end{frame}
+
+\begin{frame}{Output}
+
+\lstinputlisting[language=Scala,firstline=67,lastline=69]{src/main/scala/00-Start.scala}
+
+\begin{itemize}
+\pause \item Bzzt! This has a subtle bug
+\pause \item The stream processing is lazy and isn't evaluated till the last line.
+\pause \item Thus there aren't any errors in the buffer when we print them.
+\pause \item Our harmless-looking variable is already causing us troubles!
+\pause \item Sure, here we don't need or gain benefit from the stream, but:
+  \begin{itemize}
+    \pause \item Some degree of laziness is inevitable in fp.
+    \pause \item Laziness and unconstrained side-effects don't play nice.
+    \pause \item Even if you discount laziness, non referentially transparent functions don't compose, which is the point of FP!
+  \end{itemize}
+\end{itemize}
+
+\end{frame}
+
+\section{Reader}
+
+\begin{frame}{Death to the Global Config!}
+
+Before we go crazy fixing our side effects...
+
+\begin{itemize}
+\item With or without FP, global config is a code smell. Lets fix it!
+\pause \item In OO, we'd use DI. 
+\pause \item In scala, one way to DI is to use curried functions.
+\end{itemize}
+
+\end{frame}
+
+\subsection{Curried Functions}
+
+\begin{frame}{Curried Functions}
+
+\begin{itemize}
+\item Just a function that takes a config and returns another function.
+\pause \item We can store that configured function and call it later.
+\end{itemize}
+
+\pause
+
+\begin{block}{Old Indenter}
+\lstinputlisting[frame=none,language=Scala,firstline=37,lastline=39]{src/main/scala/00-Start.scala}
+\end{block}
+
+\begin{block}{New Indenter}
+\lstinputlisting[frame=none,language=Scala,firstline=25,lastline=27]{src/main/scala/01-CurriedDI.scala}
+\end{block}
+
+\end{frame}
+
+\begin{frame}{Change to the Stream Processor}
+
+\begin{block}{Old Processor}
+\lstinputlisting[frame=none,language=Scala,firstline=52,lastline=56]{src/main/scala/00-Start.scala}
+\end{block}
+
+\begin{block}{New Processor}
+\lstinputlisting[frame=none,language=Scala,firstline=40,lastline=45]{src/main/scala/01-CurriedDI.scala}
+\end{block}
+
+\end{frame}
+
+\begin{frame}{Wait! That sucks!}
+\begin{itemize}
+\pause \item We need to inject every function that needs the config!
+\pause \item Also need to thread the config through every level, as well.
+\pause \item This idea is the right direction, but the idea wont scale.
+\end{itemize}
+\end{frame}
+
+\subsection{Reader Monad}
+
+\begin{frame}{Introducing the Reader Monad}
+\begin{itemize}
+\pause \item Same concept as currying, but the other way around:
+  \begin{itemize}
+    \pause \item We create a function that is waiting for configuration.
+  \end{itemize}
+\pause \item Joining two readers will thread the conf between them.
+\pause \item Only need to put the config in the top and the monad will do the rest.
+\end{itemize}
+
+\lstinputlisting[language=Scala,firstline=31,lastline=36]{src/main/scala/02-ReaderMonad.scala}
+
+\end{frame}
+
+\begin{frame}{List of Readers}
+
+No change to the stream processor!
+
+\lstinputlisting[language=Scala,firstline=48,lastline=62]{src/main/scala/02-ReaderMonad.scala}
+
+\end{frame}
+
+\begin{frame}{Injecting the config}
+
+\lstinputlisting[language=Scala,firstline=65,lastline=65]{src/main/scala/02-ReaderMonad.scala}
+
+\begin{itemize}
+\pause \item Transform our \texttt{List[PpReader[String]]} to \texttt{PpReader[List[String]]}
+\pause \item Inject config into our final program to get a \texttt{List[String]}
+\pause \item We only have to thread in the config once.
+\pause \item If our conf is an immutable structure, no one can change it on us.
+\pause \item It's almost like we have a reusable Config => Output program.
+\pause \item Almost: since there is state that is not contained in the program, this is impossible right now.
+\pause \item This state is a pain! Lets move onto moving it into our monad.
+\end{itemize}
+
+\end{frame}
+
+\section{Writer}
+
+\subsection{Collecting two lists in our reader}
+
+\begin{frame}{Death to the error buffer!}
+\begin{itemize}
+\item The mutable error buffer is easiest to fix next.
+\pause \item What about putting something mutable into the config?
+  \begin{itemize}
+    \pause \item That's better than what we have, but not good enough!
+    \pause \item If a config was reused for two different monad executions, state may leak across them.
+    \pause \item We need to keep our state sealed completely inside the monad
+  \end{itemize}
+\pause \item We're already collecting a list of readers:
+  \begin{itemize}
+    \pause \item Why not collect errors and readers at the same time? 
+  \end{itemize}
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Changes to Stream Processor - Fold Initialisation}
+
+\lstinputlisting[language=Scala,firstline=54,lastline=57]{src/main/scala/03-CollectingErrorList.scala}
+
+\begin{itemize}
+\item verifyNewElement now returns a list instead of Unit.
+\pause \item We now build a \texttt{PpReader[(List[String],List[String])]} 
+  \begin{itemize}
+    \item Aliased to \texttt{PpProgram}
+  \end{itemize}
+\pause \item We now fold over the stream instead of mapping
+\end{itemize}
+
+
+\end{frame}
+
+\begin{frame}{Changes to Stream Processor - Fold Step}
+
+\lstinputlisting[language=Scala,firstline=57,lastline=72]{src/main/scala/03-CollectingErrorList.scala}
+
+\end{frame}
+
+\begin{frame}{Changes to Output}
+
+\lstinputlisting[language=Scala,firstline=74,lastline=76]{src/main/scala/03-CollectingErrorList.scala}
+
+\begin{itemize}
+\item No more sequencing since our fold is doing that for us.
+\pause \item Get back a tuple of both output lists
+\pause \item Need to remember to reverse the output list due to cons-ing
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Collecting two lists - Results}
+
+\begin{itemize}
+\item We moved our error list into the monad. Win!
+\pause \item Each level awkwardly needs to explicitly know about and append the errors.
+\pause \item This would be a real pain with lots of nesting to the code.
+\end{itemize}
+
+\end{frame}
+
+\subsection{Writer monad}
+
+\begin{frame}{Introducing the Writer Monad!}
+\begin{itemize}
+  \item \texttt{Writer[L,A]} where there must be a \texttt{Monoid[L]}
+    \begin{itemize}
+      \pause \item \texttt{List("msg").tell} to log and return unit
+      \pause \item \texttt{5.set(List("msg"))} to log and return 5
+      \pause \item Monoid.mappend used to append log state together
+    \end{itemize}
+  \pause \item We just log and forget! Just like a logger.warn("msg") !
+\end{itemize}
+
+\pause
+
+\lstinputlisting[language=Scala,firstline=34,lastline=34]{src/main/scala/04-WriterMonad.scala}
+
+\pause
+\lstinputlisting[language=Scala,firstline=47,lastline=54]{src/main/scala/04-WriterMonad.scala}
+
+\end{frame}
+
+\begin{frame}{Changes to our stream fold}
+
+\begin{itemize}
+\item Abstract out the event pattern match into a separate function  
+\end{itemize}
+
+\pause
+
+\lstinputlisting[language=Scala,firstline=56,lastline=67]{src/main/scala/04-WriterMonad.scala}
+
+\end{frame}
+
+\begin{frame}{Changes to our stream fold}
+
+\begin{itemize}
+\item For each event:
+  \begin{itemize}
+    \pause \item All we really want to do is append the new output string to the output.
+    \pause \item To do this we need to join the inner and outer monads.
+ \end{itemize}   
+\end{itemize}
+
+\pause
+
+\lstinputlisting[language=Scala,firstline=70,lastline=81]{src/main/scala/04-WriterMonad.scala}
+
+\end{frame}
+
+\begin{frame}{Changes to output}
+
+\begin{itemize}
+  \pause \item When we inject the config into the reader we now get back a writer.
+  \pause \item \texttt{writer.run} runs the writer and returns a tuple of logged state and output.
+\end{itemize}
+
+\pause
+
+\lstinputlisting[language=Scala,firstline=83,lastline=85]{src/main/scala/04-WriterMonad.scala}
+
+\end{frame}
+
+\begin{frame}{Writer Monad - Results}
+
+\begin{itemize}
+\item The appending and passing around of logs is now hidden. Win!
+\pause \item The nested monads are very awkward, though. We can still do better.
+\end{itemize}
+
+\end{frame}
+
+\section{ReaderWriterT}
+
+\begin{frame}{Introducing Monad Transformers}
+
+\begin{itemize}
+\item A way to stack monads on top of each other to feel like one monad.
+\pause \item Gets rid of the nesting when mapping / flatmapping
+\pause \item No general transformer. Written for each monad.
+\pause \item To mimic what we had before, we want these types:
+\end{itemize}
+
+\lstinputlisting[language=Scala,firstline=18,lastline=20]{src/main/scala/05-ReaderWriter.scala}
+
+\end{frame}
+
+\begin{frame}{Changes to indented and verifyNewElement}
+
+\begin{itemize}
+\item Everything is in PpReaderWriter
+\pause \item Note: Kleisli $\equiv$ ReaderT
+\end{itemize}
+
+\lstinputlisting[language=Scala,firstline=26,lastline=37]{src/main/scala/05-ReaderWriter.scala}
+
+\end{frame}
+
+\begin{frame}{Changes to stream processor}
+
+\begin{itemize}
+\item Interleaving is gone!
+\end{itemize}
+
+\lstinputlisting[language=Scala,firstline=52,lastline=66]{src/main/scala/05-ReaderWriter.scala}
+
+\end{frame}
+
+\begin{frame}{ReaderWriter Results}
+
+\begin{itemize}
+\item We have our reader and writer enabled program as nice as we can.
+\item Lets move on to get rid of the mutable stack!
+\end{itemize}
+
+\end{frame}
+
+\section{ReaderWriterState}
+
+\subsection{ReaderWriter + Explicit State passing}
+
+\begin{frame}{Removing the mutable stack}
+\begin{itemize}
+\item We need to bring the stack into our monad so that we have a completely sealed monad.
+\pause \item Lets just try threading the stack through our fold with this structure:
+\end{itemize}
+
+
+\pause
+
+\lstinputlisting[language=Scala,firstline=33,lastline=36]{src/main/scala/06-ReaderWriterCollectingState.scala}
+
+\end{frame}
+
+\begin{frame}{Changes to indentEvent}
+\begin{itemize}
+\item Each ReaderWriter returns a tuple of the new stack and output
+\end{itemize}
+
+\pause
+
+\lstinputlisting[language=Scala,firstline=54,lastline=67]{src/main/scala/06-ReaderWriterCollectingState.scala}
+
+\end{frame}
+
+\begin{frame}{Changes to processor}
+\begin{itemize}
+\item Fold has to pass the stack through and append output
+\end{itemize}
+
+\pause
+
+\lstinputlisting[language=Scala,firstline=70,lastline=82]{src/main/scala/06-ReaderWriterCollectingState.scala}
+
+\end{frame}
+
+\begin{frame}{Explicit State Threading - Results}
+\begin{itemize}
+\item Passing through the state each step is really annoying
+\pause \item Multiple levels of this state would be impractical.
+\end{itemize}
+
+\end{frame}
+
+\subsection{ReaderWriterState as a Transformer stack}
+
+\begin{frame}{Introducing the state monad}
+\begin{itemize}
+\item This monad composes functions, much like reader.
+\pause \item State functions are of the form \texttt{State(s => (newState,output)) }
+\pause \item We can modify the state for the next thing in the chain.
+\pause \item Lets add it to our existing transformer stack in the pretty printer:
+\end{itemize}
+
+\pause
+
+\lstinputlisting[language=Scala,firstline=22,lastline=26]{src/main/scala/07-ReaderWriterStateTransformer.scala}
+
+\end{frame}
+
+\begin{frame}{Build our stateful primitives}
+
+Can reuse these anywhere in our program.
+
+\lstinputlisting[language=Scala,firstline=28,lastline=43]{src/main/scala/07-ReaderWriterStateTransformer.scala}
+\end{frame}
+
+\begin{frame}{New Indenter}
+
+\lstinputlisting[language=Scala,firstline=45,lastline=51]{src/main/scala/07-ReaderWriterStateTransformer.scala}
+
+\begin{itemize}
+\item Our primitives come into play here.
+\pause \item Do notation nicely hiding the fact that there are monads at all!
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{New verifyNewElement}
+
+\lstinputlisting[language=Scala,firstline=53,lastline=65]{src/main/scala/07-ReaderWriterStateTransformer.scala}
+
+\begin{itemize}
+\item The layers are making this pretty ugly.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{New indentEvent}
+
+\lstinputlisting[language=Scala,firstline=67,lastline=78]{src/main/scala/07-ReaderWriterStateTransformer.scala}
+
+\begin{itemize}
+\item This is very easy to read, and is not too dissimilar from our original.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{New Fold}
+
+\lstinputlisting[language=Scala,firstline=81,lastline=93]{src/main/scala/07-ReaderWriterStateTransformer.scala}
+
+\begin{itemize}
+\item Stack state is gone from our fold. 
+\item Stack initialized at end like the config.
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{State Monad - Results}
+
+\begin{itemize}
+\item All state is now encapsulated without our monad.
+\pause \item Thanks to the primitives, our logic code is clean and 'monad free'
+\pause \item The primitives,however, are a bit nasty to create.
+\pause \item Because our monads are function based, can't shortcut the layers
+very well with point and liftM.
+\pause \item Would be nice to flatten this even more.
+\end{itemize}
+
+\end{frame}
+
+\subsection{ReaderWriterState from Scalaz}
+
+\begin{frame}{Introducing ReaderWriterState}
+\begin{itemize}
+\item Instead of being layers of Reader, Writer and State, this is just one layer.
+\pause \item Composes functions of the form: \\ \texttt{ReaderWriterState( (r,s) =>
+(newLog , output, newState) )}
+\pause \item Gives us the same functionality, but easier to construct our
+functions.
+\pause \item This shortcut exists because RWS stacks are very common and should
+be as nice as possible.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Primitive Improvements}
+
+\lstinputlisting[language=Scala,firstline=26,lastline=28]{src/main/scala/08-ReaderWriterState.scala}
+
+\lstinputlisting[language=Scala,firstline=47,lastline=58]{src/main/scala/08-ReaderWriterState.scala}
+
+\end{frame}
+
+\section{Conclusions}
+
+\begin{frame}{Conclusions}
+\begin{itemize}
+\pause \item Our pure code still carries state through the program.
+\pause \item All we have done is enforce that side effects must be isolated and
+serialised.
+\pause \item We're also being explicit about what kind of state a piece of code
+depends on.
+\pause \item Because the state is restricted and explicit, it is easier to
+reason about and is safer.
+\pause \item Even though we have these restrictions, our original algorithm
+still remains the same.
+\pause \item In our imperative code, we were taking risks and burdening
+ourselves with flexibility that wasn't even necessary!
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Three Points I hope I left with you}
+\begin{itemize}
+\pause \item The motivations for ReaderWriterState and how it is used.
+\pause \item Isolation of side effects is a good idea.
+\pause \item Types and FP don't get in your way: they keep you honest and help reduce bugs.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Further Reading}
+\begin{itemize}
+\pause \item LYAHFGG
+\pause \item FP in Scala
+\end{itemize}
+\end{frame}
+
+\begin{frame}{The end}
+\begin{itemize}
+\item Thanks for listening!
+\end{itemize}
+\end{frame}
+
+
+\end{document}

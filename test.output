@@ -1,0 +1,9 @@
+WARN: Msg should only contain text, contains :<error>
+<hello>
+  <msg>
+    <error>
+      This should not be here.
+    </error>
+    World
+  </msg>
+</hello>
